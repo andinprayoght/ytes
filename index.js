@@ -1,44 +1,67 @@
 import express from 'express';
-import fetch from 'node-fetch';
 
 const app = express();
 
-// Paste cookie kamu dalam format 1 baris di sini:
-const cookieHeader = `__Secure-3PSID=g.a0002AjGRR9ImruvcQhzYZVz_6gCJ40srCLcPivYk19DbcqKTDdDxj6d2Ky8ZeJwHZswtv-qvAACgYKAYwSARMSFQHGX2MiGEn1f5lOxXzWdOazJ75wyhoVAUF8yKpVJClvcsMm0dcUX_xMsYxp0076; __Secure-3PAPISID=C9hFexOJoJyJpHOJ/Ah7hsJ6xR30j-EB9k; LOGIN_INFO=AFmmF2swRAIgdbpvUtn6EnLh-pAAWuGobkn2BNLdqaPdbkV-sMl5jA8CIAbJptZ3O3QkxitUls92Einp43YaLOpHQTPXWh1g547O:QUQ3MjNmekgxbnFzcUtjRHFJWTg1SEFJVG00YURpdDZCdVVSV25PcFZGeFRXTmxUMERmQkxxOUdHR3NGZEtfMVJfN1Y5cE94LVpLZDR2QnF6UF9xU3FRdlRhNDdaOGhHVlUtOHZLOU5VWU83NWdjQ1lZVlJmWDUybU9fUWxjcHhiNU1LckhFcEtqX09ZNmxOalVEY2o3c01RcEZKcXJmWDl3; PREF=tz=Asia.Jakarta; CONSISTENCY=AKreu9tatnnrR5dk5KSVIHQ7bE5Nzqz3UmTjSU0A7YzK2QBwkY1OTGA_qY4ZOPXT4mgWSzJ7t87COIHv8czdT30E000BLirCD4nShK-cS0iETy6jJmEnM9YJz8ariAsxaUTbVf6luDMKiOL8tsbKi_iA; __Secure-1PSIDTS=sidts-CjUBwQ9iI7xmMDTS8a1N9zjv--BB6kuug3rBLzq_Re1EPu0Z8DpIQFh-sWQwKN4phHq0gApBExAA; __Secure-3PSIDTS=sidts-CjUBwQ9iI7xmMDTS8a1N9zjv--BB6kuug3rBLzq_Re1EPu0Z8DpIQFh-sWQwKN4phHq0gApBExAA; __Secure-3PSIDCC=AKEyXzUUWkvH2ngmtP-cNNrM8MzuK-oYq5svlXmof11CX7S5UEfOQh4JqLt4IHRL0B4BK8bu; ST-183jmdn=session_logininfo=AFmmF2swRAIgdbpvUtn6EnLh-pAAWuGobkn2BNLdqaPdbkV-sMl5jA8CIAbJptZ3O3QkxitUls92Einp43YaLOpHQTPXWh1g547O%3AQUQ3MjNmekgxbnFzcUtjRHFJWTg1SEFJVG00YURpdDZCdVVSV25PcFZGeFRXTmxUMERmQkxxOUdHR3NGZEtfMVJfN1Y5cE94LVpLZDR2QnF6UF9xU3FRdlRhNDdaOGhHVlUtOHZLOU5VWU83NWdjQ1lZVlJmWDUybU9fUWxjcHhiNU1LckhFcEtqX09ZNmxOalVEY2o3c01RcEZKcXJmWDl3; VISITOR_INFO1_LIVE=HdZx4MkHsp4; VISITOR_PRIVACY_METADATA=CgJTRxIEGgAgPQ%3D%3D; YSC=SArqUo030uU; __Secure-ROLLOUT_TOKEN=CJGDqfeHvI7YuwEQ19OCs8iWkAMY3u2Xz9bBkAM%3D;`;
+// Validasi environment variable dari Koyeb dashboard
+const COOKIE_HEADER = process.env.YT_COOKIE;
+if (!COOKIE_HEADER) {
+  console.error('❌ Error: YT_COOKIE environment variable is required');
+  console.error('Set it from Koyeb dashboard: Settings > Environment variables');
+  process.exit(1);
+}
+
+// Sanitasi input video ID
+function isValidVideoId(id) {
+  return /^[a-zA-Z0-9_-]{8,16}$/.test(id);
+}
 
 app.get('/live/:id', async (req, res) => {
   const videoID = req.params.id.split('.')[0];
+
+  if (!isValidVideoId(videoID)) {
+    return res.status(400).send('Invalid video ID format');
+  }
+
   const url = `https://www.youtube.com/live/${videoID}/live`;
 
   try {
     const response = await fetch(url, {
       headers: {
-        'Cookie': cookieHeader,
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36'
-      }
+        'Cookie': COOKIE_HEADER,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9'
+      },
+      redirect: 'follow'
     });
 
     if (!response.ok) {
-      return res.status(500).send(`YouTube responded with status: ${response.status}`);
+      console.error(`YouTube error: ${response.status} for video ${videoID}`);
+      return res.status(response.status).send(`YouTube error: ${response.status}`);
     }
 
     const html = await response.text();
-    const match = html.match(/(?<=hlsManifestUrl":")[^"]+\.m3u8/);
-
-    if (match && match[0]) {
-      return res.redirect(302, match[0]);
+    const hlsMatch = html.match(/"hlsManifestUrl":"([^"]+\.m3u8[^"]*)"/);
+    
+    if (hlsMatch && hlsMatch[1]) {
+      const manifestUrl = hlsMatch[1].replace(/\\u0026/g, '&');
+      res.setHeader('Cache-Control', 'private, max-age=30');
+      return res.redirect(302, manifestUrl);
     } else {
-      return res.status(404).send("No .m3u8 URL found in YouTube response.");
+      console.warn(`No m3u8 found for video ${videoID}`);
+      return res.status(404).send('No HLS manifest found');
     }
   } catch (err) {
-    return res.status(500).send(`Fetch error: ${err.message}`);
+    console.error(`Fetch error for ${videoID}:`, err.message);
+    return res.status(500).send('Internal server error');
   }
 });
 
-// fallback
-app.use((req, res) => {
-  res.status(404).send('Endpoint not found');
-});
+app.get('/health', (req, res) => res.send('OK'));
 
-const PORT = process.env.PORT || 7860;
-app.listen(PORT, () => console.log(`Server is running on port ${PORT}`));
+app.use((req, res) => res.status(404).send('Endpoint not found'));
+
+const PORT = process.env.PORT || 8080;
+app.listen(PORT, () => {
+  console.log(`✅ Server running on port ${PORT}`);
+  console.log(`📦 Node.js version: ${process.version}`);
+});
